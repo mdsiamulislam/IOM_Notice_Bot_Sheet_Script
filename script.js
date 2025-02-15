@@ -15,11 +15,11 @@ function sendNotices() {
   var groupsData = groupsSheet.getDataRange().getValues();
 
   var today = new Date();
-  today.setHours(0, 0, 0, 0); // Reset time for accurate comparison
+  today.setHours(0, 0, 0, 0);
 
   var groupMap = {};
   for (var i = 1; i < groupsData.length; i++) {
-    var groupName = groupsData[i][0] ? groupsData[i][0].toString().trim() : "";
+    var groupName = groupsData[i][0]?.toString().trim() || "";
     var groupIds = groupsData[i][1] ? groupsData[i][1].toString().split(",").map(id => id.trim()) : [];
 
     if (groupName && groupIds.length > 0) {
@@ -32,13 +32,13 @@ function sendNotices() {
   var toArchive = [];
 
   for (var i = 1; i < noticesData.length; i++) {
-    var message = noticesData[i][0] ? noticesData[i][0].toString().trim() : "";
-    var groupNames = noticesData[i][1] ? noticesData[i][1].toString().trim() : "";
-    var status = noticesData[i][3] ? noticesData[i][3].toString().trim() : "";
+    var message = noticesData[i][0]?.toString().trim() || "";
+    var groupNames = noticesData[i][1]?.toString().trim() || "";
+    var status = noticesData[i][3]?.toString().trim() || "";
     var scheduledDate = noticesData[i][4];
-    var imageUrl = noticesData[i][5] ? noticesData[i][5].toString().trim() : null; // Column for Image URL
+    var imageUrl = noticesData[i][5]?.toString().trim() || null;
 
-    if (!message || !groupNames || !scheduledDate) {
+    if (!groupNames || !scheduledDate) {
       Logger.log(`Skipping row ${i + 1}: Missing data.`);
       continue;
     }
@@ -52,7 +52,7 @@ function sendNotices() {
     }
 
     if (noticeDate.getTime() !== today.getTime()) {
-      continue; // Skip if not today's date
+      continue;
     }
 
     var groupList = groupNames.split(",").map(name => name.trim());
@@ -68,41 +68,26 @@ function sendNotices() {
       }
 
       for (var chatId of chatIds) {
-        var payload, apiUrl;
-
-        if (imageUrl && imageUrl.startsWith("http")) {
-          var directImageUrl = convertDriveLink(imageUrl);
-          
-          // Send as Photo
-          apiUrl = apiUrlPhoto;
-          payload = {
-            "chat_id": chatId,
-            "photo": directImageUrl,
-            "caption": message,
-            "parse_mode": "Markdown"
-          };
-        } else {
-          // Send as Text
-          apiUrl = apiUrlText;
-          payload = {
-            "chat_id": chatId,
-            "text": message,
-            "parse_mode": "Markdown"
-          };
-        }
-
-        var options = {
-          "method": "post",
-          "contentType": "application/json",
-          "payload": JSON.stringify(payload)
-        };
+        var directImageUrl = imageUrl && imageUrl.startsWith("http") ? convertDriveLink(imageUrl) : null;
 
         try {
-          var response = UrlFetchApp.fetch(apiUrl, options);
-          var result = JSON.parse(response.getContentText());
-
-          if (!result.ok) {
-            Logger.log(`Failed to send message to '${groupName}' (ID: ${chatId}): ${result.description}`);
+          if (message && directImageUrl) {
+            if (message.length <= 1024) {
+              // Send as image with caption
+              sendPhoto(chatId, directImageUrl, message);
+            } else {
+              // Send text first, then image separately
+              sendText(chatId, message);
+              sendPhoto(chatId, directImageUrl, "");
+            }
+          } else if (message) {
+            // Send only text
+            sendText(chatId, message);
+          } else if (directImageUrl) {
+            // Send only image
+            sendPhoto(chatId, directImageUrl, "");
+          } else {
+            Logger.log(`Skipping row ${i + 1}: No valid content to send.`);
             allSent = false;
           }
         } catch (e) {
@@ -113,8 +98,8 @@ function sendNotices() {
     }
 
     if (allSent) {
-      noticesSheet.getRange(i + 1, 4).setValue("Sent"); // Update Status column
-      noticesSheet.getRange(i + 1, 6).setValue(new Date()); // Update timestamp
+      noticesSheet.getRange(i + 1, 4).setValue("Sent");
+      noticesSheet.getRange(i + 1, 6).setValue(new Date());
       toArchive.push(noticesData[i]);
     }
   }
@@ -126,6 +111,37 @@ function sendNotices() {
   }
 }
 
+function sendText(chatId, message) {
+  var apiUrl = `https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`;
+  var payload = {
+    "chat_id": chatId,
+    "text": message,
+    "parse_mode": "Markdown"
+  };
+  var options = {
+    "method": "post",
+    "contentType": "application/json",
+    "payload": JSON.stringify(payload)
+  };
+  UrlFetchApp.fetch(apiUrl, options);
+}
+
+function sendPhoto(chatId, imageUrl, caption) {
+  var apiUrl = `https://api.telegram.org/bot${BOT_TOKEN}/sendPhoto`;
+  var payload = {
+    "chat_id": chatId,
+    "photo": imageUrl,
+    "caption": caption,
+    "parse_mode": "Markdown"
+  };
+  var options = {
+    "method": "post",
+    "contentType": "application/json",
+    "payload": JSON.stringify(payload)
+  };
+  UrlFetchApp.fetch(apiUrl, options);
+}
+
 // Function to convert Google Drive image link to direct Telegram-compatible URL
 function convertDriveLink(driveLink) {
   if (driveLink.includes("drive.google.com")) {
@@ -134,7 +150,7 @@ function convertDriveLink(driveLink) {
       return `https://drive.google.com/uc?export=view&id=${fileId[0]}`;
     }
   }
-  return driveLink; // Return as-is if not a Drive link
+  return driveLink;
 }
 
 // Function to add manual trigger button in Google Sheets
